@@ -818,6 +818,6 @@ If you find this project helpful, please consider giving it a star!
 
 ---
 
-**Built with ❤️ by [Your Name]**
+**Built with ❤️ by [shiv aggarwal]**
 
 *Last Updated: January 2026*
