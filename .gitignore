@@ -137,3 +137,4 @@ dist
 # Vite logs files
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+/workspaces/local-service-booking/backend/config/local-service-booking-f0034-firebase-adminsdk-fbsvc-0796c84c8e.json

@@ -3,9 +3,8 @@ const admin = require('firebase-admin');
 let db, bucket;
 
 try {
-  // Use environment variable if set, otherwise use your actual JSON path
   const serviceAccountPath =
-    process.env.FIREBASE_SERVICE_ACCOUNT_PATH || '/workspaces/local-service-booking/backend/config/local-service-booking-f0034-firebase-adminsdk-fbsvc-0796c84c8e.json';
+    process.env.FIREBASE_SERVICE_ACCOUNT_PATH || './config/local-service-booking-f0034-firebase-adminsdk-fbsvc-0796c84c8e.json';
 
   const serviceAccount = require(serviceAccountPath);
 
