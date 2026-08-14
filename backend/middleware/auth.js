@@ -1,4 +1,4 @@
-const admin = require('../config/firebase');
+const { admin } = require('../config/firebase');
 const User = require('../models/User');
 
 // Protect routes - Verify Firebase Token
@@ -20,6 +20,13 @@ const protect = async (req, res, next) => {
     }
 
     // Verify Firebase token
+    if (!admin.apps.length) {
+      return res.status(503).json({
+        success: false,
+        message: 'Authentication service is not configured'
+      });
+    }
+
     const decoded = await admin.auth().verifyIdToken(token);
     req.user = decoded;
 
@@ -39,8 +46,7 @@ const protect = async (req, res, next) => {
     console.error('Auth error:', error);
     res.status(401).json({
       success: false,
-      message: '❌ Token verification failed',
-      error: error.message
+      message: '❌ Token verification failed'
     });
   }
 };

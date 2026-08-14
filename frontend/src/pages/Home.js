@@ -1,16 +1,15 @@
 import React from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { 
   FiSearch, FiCalendar, FiStar, FiCheckCircle, 
-  FiTool, FiHome, FiZap, FiScissors, FiBook, FiWrench,
+  FiTool, FiHome, FiZap, FiScissors, FiBook,
   FiArrowRight, FiShield, FiClock, FiDollarSign
 } from 'react-icons/fi';
 import './Home.css';
 
 const Home = () => {
   const { user } = useAuth();
-  const navigate = useNavigate();
 
   const categories = [
     { icon: <FiHome />, name: 'Cleaning', path: '/services?category=cleaning' },
@@ -18,7 +17,7 @@ const Home = () => {
     { icon: <FiZap />, name: 'Electrical', path: '/services?category=electrical' },
     { icon: <FiScissors />, name: 'Beauty', path: '/services?category=beauty' },
     { icon: <FiBook />, name: 'Tutoring', path: '/services?category=tutoring' },
-    { icon: <FiWrench />, name: 'Repair', path: '/services?category=repair' }
+    { icon: <FiTool />, name: 'Repair', path: '/services?category=repair' }
   ];
 
   const features = [
