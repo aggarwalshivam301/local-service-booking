@@ -5,7 +5,7 @@ import {
   signOut as firebaseSignOut,
   onAuthStateChanged 
 } from 'firebase/auth';
-import { auth } from '../services/firebase';
+import { auth, firebaseConfigured } from '../services/firebase';
 import api from '../services/api';
 import { toast } from 'react-toastify';
 
@@ -21,9 +21,23 @@ export const useAuth = () => {
 
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
+
+  const ensureFirebaseConfigured = () => {
+    if (!firebaseConfigured || !auth) {
+      const error = new Error('Firebase authentication is not configured. Add the REACT_APP_FIREBASE_* variables to the frontend environment.');
+      toast.error(error.message);
+      throw error;
+    }
+    return true;
+  };
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    if (!firebaseConfigured || !auth) {
+      setLoading(false);
+      return undefined;
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       if (firebaseUser) {
         try {
@@ -45,6 +59,7 @@ export const AuthProvider = ({ children }) => {
 
   const register = async (email, password, displayName, role) => {
     try {
+      ensureFirebaseConfigured();
       const userCredential = await createUserWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
@@ -68,6 +83,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
+      ensureFirebaseConfigured();
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const firebaseUser = userCredential.user;
 
@@ -89,6 +105,10 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      if (!firebaseConfigured || !auth) {
+        setUser(null);
+        return;
+      }
       await firebaseSignOut(auth);
       setUser(null);
       toast.success('Logged out successfully');
