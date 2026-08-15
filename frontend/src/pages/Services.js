@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import api from '../services/api';
 import { FiSearch, FiMapPin, FiStar, FiDollarSign } from 'react-icons/fi';
 import { toast } from 'react-toastify';
@@ -25,26 +26,26 @@ const Services = () => {
   ];
 
   useEffect(() => {
+    const fetchServices = async () => {
+      try {
+        setLoading(true);
+        const params = {};
+        if (filters.search) params.search = filters.search;
+        if (filters.category && filters.category !== 'all') params.category = filters.category;
+        if (filters.city) params.city = filters.city;
+
+        const response = await api.get('/services', { params });
+        setServices(response.data.services || []);
+      } catch (error) {
+        console.error('Error fetching services:', error);
+        toast.error('Failed to load services');
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchServices();
-  }, [filters]);
-
-  const fetchServices = async () => {
-    try {
-      setLoading(true);
-      const params = {};
-      if (filters.search) params.search = filters.search;
-      if (filters.category && filters.category !== 'all') params.category = filters.category;
-      if (filters.city) params.city = filters.city;
-
-      const response = await api.get('/services', { params });
-      setServices(response.data.services || []);
-    } catch (error) {
-      console.error('Error fetching services:', error);
-      toast.error('Failed to load services');
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [filters.search, filters.category, filters.city]);
 
   const handleFilterChange = (e) => {
     setFilters({
@@ -137,7 +138,7 @@ const Services = () => {
                 <div className="service-content">
                   <h3 className="service-title">{service.title}</h3>
                   <p className="service-description">
-                    {service.description.substring(0, 100)}...
+                    {service.description?.length > 100 ? `${service.description.substring(0, 100)}...` : service.description}
                   </p>
                   
                   <div className="service-provider">
@@ -162,9 +163,9 @@ const Services = () => {
                       <span className="price-type">/{service.priceType}</span>
                     </div>
                     
-                    <button className="btn btn-primary btn-sm">
+                    <Link to={`/services/${service._id}`} className="btn btn-primary btn-sm">
                       View Details
-                    </button>
+                    </Link>
                   </div>
                 </div>
               </div>

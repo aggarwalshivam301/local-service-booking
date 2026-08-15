@@ -14,6 +14,9 @@ const router = express.Router();
 
 // Public routes
 router.get('/', getAllServices);
+
+// Provider-specific path must be declared before the dynamic `/:id` route.
+router.get('/provider/my-services', protect, authorize('provider'), getProviderServices);
 router.get('/:id', getService);
 
 // Protected routes (Provider only)
@@ -21,7 +24,5 @@ router.post('/', protect, authorize('provider'), validateService, validate, crea
 router.put('/:id', protect, authorize('provider'), updateService);
 router.delete('/:id', protect, authorize('provider'), deleteService);
 
-// Provider routes
-router.get('/provider/my-services', protect, authorize('provider'), getProviderServices);
 
 module.exports = router;

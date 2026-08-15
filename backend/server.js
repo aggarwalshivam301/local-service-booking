@@ -1,6 +1,6 @@
 const express = require('express');
-const mongoose = require('mongoose');
 const cors = require('cors');
+const { checkDatabase, closeDatabase } = require('./db');
 require('dotenv').config();
 
 // Import routes
@@ -22,8 +22,8 @@ app.use(express.urlencoded({ extended: true }));
 
 const startServer = async () => {
   try {
-    await mongoose.connect(process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/local-service-booking');
-    console.log('✅ MongoDB connected successfully');
+    await checkDatabase();
+    console.log('✅ PostgreSQL connected successfully');
 
     const PORT = process.env.PORT || 5000;
     app.listen(PORT, () => {
@@ -31,7 +31,7 @@ const startServer = async () => {
       console.log(`📝 Health check: http://localhost:${PORT}/health`);
     });
   } catch (error) {
-    console.error('❌ MongoDB connection error:', error.message);
+    console.error('❌ PostgreSQL connection error:', error.message);
     process.exitCode = 1;
   }
 };
@@ -72,5 +72,10 @@ app.use((err, req, res, next) => {
 if (require.main === module) {
   startServer();
 }
+
+process.on('SIGTERM', async () => {
+  await closeDatabase();
+  process.exit(0);
+});
 
 module.exports = { app, startServer };

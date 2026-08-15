@@ -5,9 +5,27 @@ on:
     branches: [main, "manus/**"]
   pull_request:
 
+env:
+  DATABASE_URL: postgresql://postgres:postgres@localhost:5432/local_service_booking
+  NODE_ENV: test
+
 jobs:
   backend:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: local_service_booking
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d local_service_booking"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     defaults:
       run:
         working-directory: backend
@@ -22,7 +40,11 @@ jobs:
           cache-dependency-path: backend/package-lock.json
       - name: Install dependencies
         run: npm ci
-      - name: Run smoke tests
+      - name: Apply SQL migrations
+        run: npm run db:migrate
+      - name: Verify SQL connection
+        run: npm run db:check
+      - name: Run backend smoke tests
         run: npm test
 
   frontend:

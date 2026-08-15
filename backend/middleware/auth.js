@@ -1,5 +1,5 @@
 const { admin } = require('../config/firebase');
-const User = require('../models/User');
+const { query } = require('../db');
 
 // Protect routes - Verify Firebase Token
 const protect = async (req, res, next) => {
@@ -30,8 +30,9 @@ const protect = async (req, res, next) => {
     const decoded = await admin.auth().verifyIdToken(token);
     req.user = decoded;
 
-    // Get user from database
-    const user = await User.findOne({ firebaseUid: decoded.uid });
+    // Resolve the Firebase identity to the SQL application user.
+    const result = await query('SELECT id, role FROM users WHERE firebase_uid = $1', [decoded.uid]);
+    const user = result.rows[0];
     if (!user) {
       return res.status(404).json({
         success: false,
@@ -39,7 +40,7 @@ const protect = async (req, res, next) => {
       });
     }
 
-    req.userId = user._id;
+    req.userId = user.id;
     req.userRole = user.role;
     next();
   } catch (error) {

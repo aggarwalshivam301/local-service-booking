@@ -1,238 +1,223 @@
-const Booking = require('../models/Booking');
-const Service = require('../models/Service');
+const { query, withTransaction } = require('../db');
+const { mapBooking } = require('../db/mappers');
 
-// @desc    Create booking
-// @route   POST /api/bookings
+const bookingSelect = `
+  SELECT
+    b.id AS booking_id,
+    b.service_id,
+    b.provider_id,
+    b.customer_id,
+    b.booking_date,
+    b.start_time,
+    b.end_time,
+    b.status,
+    b.total_price,
+    b.customer_notes,
+    b.cancellation_reason,
+    b.cancelled_by,
+    b.cancelled_at,
+    b.completed_at,
+    b.created_at,
+    b.updated_at,
+    json_build_object(
+      '_id', s.id,
+      'id', s.id,
+      'title', s.title,
+      'images', COALESCE((SELECT json_agg(si.image_url ORDER BY si.sort_order) FROM service_images si WHERE si.service_id = s.id), '[]'::json),
+      'price', s.price,
+      'category', s.category
+    ) AS service,
+    json_build_object(
+      '_id', provider.id,
+      'id', provider.id,
+      'displayName', provider.display_name,
+      'email', provider.email,
+      'phoneNumber', provider.phone_number,
+      'profileImage', provider.profile_image
+    ) AS provider,
+    json_build_object(
+      '_id', customer.id,
+      'id', customer.id,
+      'displayName', customer.display_name,
+      'email', customer.email,
+      'phoneNumber', customer.phone_number,
+      'profileImage', customer.profile_image
+    ) AS customer
+  FROM bookings b
+  JOIN services s ON s.id = b.service_id
+  JOIN users provider ON provider.id = b.provider_id
+  JOIN users customer ON customer.id = b.customer_id
+`;
+
+const getBookingRow = async (bookingId) => {
+  const result = await query(`${bookingSelect} WHERE b.id = $1`, [bookingId]);
+  return result.rows[0] || null;
+};
+
 exports.createBooking = async (req, res) => {
   try {
-    const { serviceId, date, startTime, endTime, customerNotes } = req.body;
+    const { serviceId, date, startTime, endTime, customerNotes = '' } = req.body;
 
-    // Get service
-    const service = await Service.findById(serviceId);
-    if (!service) {
-      return res.status(404).json({
-        success: false,
-        message: '❌ Service not found'
-      });
-    }
+    const bookingId = await withTransaction(async (client) => {
+      const serviceResult = await client.query(
+        'SELECT id, provider_id, price FROM services WHERE id = $1 AND is_active = true FOR UPDATE',
+        [serviceId]
+      );
+      const service = serviceResult.rows[0];
 
-    // Check if time slot is available
-    const bookingDate = new Date(date);
-    const existingBooking = await Booking.findOne({
-      serviceId,
-      date: {
-        $gte: new Date(date),
-        $lt: new Date(new Date(date).getTime() + 24 * 60 * 60 * 1000)
-      },
-      startTime,
-      status: { $nin: ['cancelled'] }
+      if (!service) {
+        const error = new Error('SERVICE_NOT_FOUND');
+        error.status = 404;
+        throw error;
+      }
+
+      // Serialize booking attempts for this service/date, then reject all time overlaps.
+      await client.query('SELECT pg_advisory_xact_lock(hashtext($1 || $2))', [serviceId, date]);
+      const conflict = await client.query(
+        `SELECT 1 FROM bookings
+         WHERE service_id = $1
+           AND booking_date = $2
+           AND status <> 'cancelled'
+           AND start_time < $4::time
+           AND end_time > $3::time
+         LIMIT 1`,
+        [serviceId, date, startTime, endTime]
+      );
+
+      if (conflict.rowCount > 0) {
+        const error = new Error('TIME_SLOT_UNAVAILABLE');
+        error.status = 409;
+        throw error;
+      }
+
+      const result = await client.query(
+        `INSERT INTO bookings
+          (service_id, provider_id, customer_id, booking_date, start_time, end_time, total_price, customer_notes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
+        [serviceId, service.provider_id, req.userId, date, startTime, endTime, service.price, customerNotes]
+      );
+
+      await client.query(
+        'UPDATE services SET total_bookings = total_bookings + 1 WHERE id = $1',
+        [serviceId]
+      );
+
+      return result.rows[0].id;
     });
 
-    if (existingBooking) {
-      return res.status(400).json({
-        success: false,
-        message: '❌ This time slot is already booked'
-      });
-    }
-
-    // Create booking
-    const booking = await Booking.create({
-      serviceId,
-      providerId: service.providerId,
-      customerId: req.userId,
-      date: bookingDate,
-      startTime,
-      endTime,
-      totalPrice: service.price,
-      customerNotes
-    });
-
-    // Update service booking count
-    service.totalBookings += 1;
-    await service.save();
-
-    // Populate before returning
-    const populatedBooking = await Booking.findById(booking._id)
-      .populate('serviceId', 'title price')
-      .populate('providerId', 'displayName email phoneNumber')
-      .populate('customerId', 'displayName email phoneNumber');
-
+    const booking = await getBookingRow(bookingId);
     res.status(201).json({
       success: true,
       message: '✅ Booking created successfully',
-      booking: populatedBooking
+      booking: mapBooking(booking)
     });
   } catch (error) {
-    console.error('Create booking error:', error);
-    res.status(500).json({
-      success: false,
-      message: '❌ Error creating booking',
-      error: error.message
-    });
+    if (error.message === 'SERVICE_NOT_FOUND') {
+      return res.status(404).json({ success: false, message: '❌ Service not found' });
+    }
+    if (error.message === 'TIME_SLOT_UNAVAILABLE') {
+      return res.status(409).json({ success: false, message: '❌ This time slot overlaps an existing booking' });
+    }
+    console.error('Create booking error:', error.message);
+    res.status(400).json({ success: false, message: '❌ Error creating booking' });
   }
 };
 
-// @desc    Get user's bookings
-// @route   GET /api/bookings/my-bookings
 exports.getMyBookings = async (req, res) => {
   try {
-    let query = {};
-
-    if (req.userRole === 'customer') {
-      query.customerId = req.userId;
-    } else if (req.userRole === 'provider') {
-      query.providerId = req.userId;
-    }
-
-    const bookings = await Booking.find(query)
-      .populate('serviceId', 'title images price category')
-      .populate('customerId', 'displayName email phoneNumber profileImage')
-      .populate('providerId', 'displayName email phoneNumber profileImage')
-      .sort({ createdAt: -1 });
+    const column = req.userRole === 'provider' ? 'b.provider_id' : 'b.customer_id';
+    const result = await query(`${bookingSelect} WHERE ${column} = $1 ORDER BY b.created_at DESC`, [req.userId]);
 
     res.status(200).json({
       success: true,
-      count: bookings.length,
-      bookings
+      count: result.rowCount,
+      bookings: result.rows.map(mapBooking)
     });
   } catch (error) {
-    console.error('Get bookings error:', error);
-    res.status(500).json({
-      success: false,
-      message: '❌ Error fetching bookings',
-      error: error.message
-    });
+    console.error('Get bookings error:', error.message);
+    res.status(500).json({ success: false, message: '❌ Error fetching bookings' });
   }
 };
 
-// @desc    Get single booking
-// @route   GET /api/bookings/:id
 exports.getBooking = async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.id)
-      .populate('serviceId')
-      .populate('customerId')
-      .populate('providerId');
+    const row = await getBookingRow(req.params.id);
+    if (!row) return res.status(404).json({ success: false, message: '❌ Booking not found' });
 
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: '❌ Booking not found'
-      });
+    if (row.customer_id !== req.userId && row.provider_id !== req.userId) {
+      return res.status(403).json({ success: false, message: '❌ Not authorized to view this booking' });
     }
 
-    // Check authorization
-    if (booking.customerId._id.toString() !== req.userId.toString() &&
-        booking.providerId._id.toString() !== req.userId.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: '❌ Not authorized to view this booking'
-      });
-    }
-
-    res.status(200).json({
-      success: true,
-      booking
-    });
+    res.status(200).json({ success: true, booking: mapBooking(row) });
   } catch (error) {
-    console.error('Get booking error:', error);
-    res.status(500).json({
-      success: false,
-      message: '❌ Error fetching booking',
-      error: error.message
-    });
+    console.error('Get booking error:', error.message);
+    res.status(500).json({ success: false, message: '❌ Error fetching booking' });
   }
 };
 
-// @desc    Update booking status
-// @route   PUT /api/bookings/:id/status
 exports.updateBookingStatus = async (req, res) => {
   try {
     const { status } = req.body;
-
-    const booking = await Booking.findById(req.params.id);
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: '❌ Booking not found'
-      });
+    const allowedStatuses = new Set(['pending', 'confirmed', 'completed', 'cancelled']);
+    if (!allowedStatuses.has(status)) {
+      return res.status(400).json({ success: false, message: '❌ Invalid booking status' });
     }
 
-    // Check authorization
-    if (booking.providerId.toString() !== req.userId.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: '❌ Only provider can update booking status'
-      });
+    const existing = await getBookingRow(req.params.id);
+    if (!existing) return res.status(404).json({ success: false, message: '❌ Booking not found' });
+    if (existing.provider_id !== req.userId) {
+      return res.status(403).json({ success: false, message: '❌ Only provider can update booking status' });
+    }
+    if (existing.status === 'cancelled' || existing.status === 'completed') {
+      return res.status(409).json({ success: false, message: '❌ This booking is already finalized' });
     }
 
-    booking.status = status;
-    if (status === 'completed') {
-      booking.completedAt = new Date();
-    }
-    await booking.save();
+    const result = await query(
+      `UPDATE bookings
+       SET status = $1,
+           completed_at = CASE WHEN $1 = 'completed' THEN now() ELSE completed_at END
+       WHERE id = $2 AND provider_id = $3
+       RETURNING id`,
+      [status, req.params.id, req.userId]
+    );
 
-    const updatedBooking = await Booking.findById(booking._id)
-      .populate('serviceId', 'title')
-      .populate('customerId', 'displayName email');
-
+    const updated = await getBookingRow(result.rows[0].id);
     res.status(200).json({
       success: true,
       message: '✅ Booking status updated successfully',
-      booking: updatedBooking
+      booking: mapBooking(updated)
     });
   } catch (error) {
-    console.error('Update booking status error:', error);
-    res.status(500).json({
-      success: false,
-      message: '❌ Error updating booking status',
-      error: error.message
-    });
+    console.error('Update booking status error:', error.message);
+    res.status(500).json({ success: false, message: '❌ Error updating booking status' });
   }
 };
 
-// @desc    Cancel booking
-// @route   DELETE /api/bookings/:id
 exports.cancelBooking = async (req, res) => {
   try {
-    const { cancellationReason } = req.body;
+    const { cancellationReason = '' } = req.body;
+    const result = await query(
+      `UPDATE bookings
+       SET status = 'cancelled',
+           cancellation_reason = $1,
+           cancelled_by = $2,
+           cancelled_at = now()
+       WHERE id = $3
+         AND (customer_id = $4 OR provider_id = $4)
+         AND status IN ('pending', 'confirmed')
+       RETURNING id`,
+      [cancellationReason, req.userRole, req.params.id, req.userId]
+    );
 
-    const booking = await Booking.findById(req.params.id);
-
-    if (!booking) {
-      return res.status(404).json({
-        success: false,
-        message: '❌ Booking not found'
-      });
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, message: '❌ Booking not found or cannot be cancelled' });
     }
 
-    // Check authorization
-    if (booking.customerId.toString() !== req.userId.toString() &&
-        booking.providerId.toString() !== req.userId.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: '❌ Not authorized to cancel this booking'
-      });
-    }
-
-    booking.status = 'cancelled';
-    booking.cancellationReason = cancellationReason || '';
-    booking.cancelledBy = req.userRole;
-    booking.cancelledAt = new Date();
-    await booking.save();
-
-    res.status(200).json({
-      success: true,
-      message: '✅ Booking cancelled successfully',
-      booking
-    });
+    const booking = await getBookingRow(result.rows[0].id);
+    res.status(200).json({ success: true, message: '✅ Booking cancelled successfully', booking: mapBooking(booking) });
   } catch (error) {
-    console.error('Cancel booking error:', error);
-    res.status(500).json({
-      success: false,
-      message: '❌ Error cancelling booking',
-      error: error.message
-    });
+    console.error('Cancel booking error:', error.message);
+    res.status(500).json({ success: false, message: '❌ Error cancelling booking' });
   }
 };

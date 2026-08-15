@@ -9,6 +9,11 @@ import Home from './pages/Home';
 import Login from './pages/Login';
 import Register from './pages/Register';
 import Services from './pages/Services';
+import ServiceDetails from './pages/ServiceDetails';
+import Bookings from './pages/Bookings';
+import ProviderServices from './pages/ProviderServices';
+import Profile from './pages/Profile';
+import ProtectedRoute from './components/ProtectedRoute';
 import './assets/styles/index.css';
 
 function App() {
@@ -23,6 +28,14 @@ function App() {
               <Route path="/login" element={<Login />} />
               <Route path="/register" element={<Register />} />
               <Route path="/services" element={<Services />} />
+              <Route path="/services/:id" element={<ServiceDetails />} />
+              <Route element={<ProtectedRoute />}>
+                <Route path="/bookings" element={<Bookings />} />
+                <Route path="/profile" element={<Profile />} />
+              </Route>
+              <Route element={<ProtectedRoute roles={['provider']} />}>
+                <Route path="/my-services" element={<ProviderServices />} />
+              </Route>
             </Routes>
           </main>
           <Footer />

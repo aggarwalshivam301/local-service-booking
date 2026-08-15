@@ -1,140 +1,157 @@
-const User = require('../models/User');
+const { query } = require('../db');
 
-// @desc    Register new user
-// @route   POST /api/auth/register
+const toUser = (row) => ({
+  _id: row.id,
+  id: row.id,
+  firebaseUid: row.firebase_uid,
+  email: row.email,
+  displayName: row.display_name,
+  phoneNumber: row.phone_number,
+  role: row.role,
+  profileImage: row.profile_image,
+  address: {
+    street: row.street,
+    city: row.city,
+    state: row.state,
+    zipCode: row.zip_code
+  },
+  businessName: row.business_name,
+  businessDescription: row.business_description,
+  rating: Number(row.rating),
+  totalReviews: row.total_reviews,
+  isVerified: row.is_verified,
+  createdAt: row.created_at,
+  updatedAt: row.updated_at
+});
+
+const findById = async (id) => {
+  const result = await query('SELECT * FROM users WHERE id = $1', [id]);
+  return result.rows[0] || null;
+};
+
 exports.register = async (req, res) => {
   try {
-    const { firebaseUid, email, displayName, role } = req.body;
+    const { firebaseUid, email, displayName, role = 'customer' } = req.body;
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
+    const existingUser = await query(
+      'SELECT id FROM users WHERE firebase_uid = $1 OR lower(email) = lower($2) LIMIT 1',
+      [firebaseUid, email]
+    );
+
+    if (existingUser.rowCount > 0) {
       return res.status(400).json({
         success: false,
-        message: '❌ User with this email already exists'
+        message: '❌ User with this email or Firebase account already exists'
       });
     }
 
-    // Create new user
-    const user = await User.create({
-      firebaseUid,
-      email,
-      displayName,
-      role: role || 'customer'
-    });
+    const result = await query(
+      `INSERT INTO users (firebase_uid, email, display_name, role)
+       VALUES ($1, lower($2), $3, $4)
+       RETURNING *`,
+      [firebaseUid, email, displayName, role]
+    );
 
     res.status(201).json({
       success: true,
       message: '✅ User registered successfully',
-      user: {
-        id: user._id,
-        email: user.email,
-        displayName: user.displayName,
-        role: user.role
-      }
+      user: toUser(result.rows[0])
     });
   } catch (error) {
-    console.error('Register error:', error);
-    res.status(500).json({
+    console.error('Register error:', error.message);
+    res.status(error.code === '23505' ? 400 : 500).json({
       success: false,
-      message: '❌ Error registering user',
-      error: error.message
+      message: error.code === '23505' ? '❌ User already exists' : '❌ Error registering user'
     });
   }
 };
 
-// @desc    Login user (verify Firebase token)
-// @route   POST /api/auth/login
 exports.login = async (req, res) => {
   try {
-    const { firebaseUid, email } = req.body;
+    const { firebaseUid } = req.body;
+    const result = await query('SELECT * FROM users WHERE firebase_uid = $1', [firebaseUid]);
 
-    // Find user
-    const user = await User.findOne({ firebaseUid });
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: '❌ User not found'
-      });
+    if (result.rowCount === 0) {
+      return res.status(400).json({ success: false, message: '❌ User not found' });
     }
 
     res.status(200).json({
       success: true,
       message: '✅ Login successful',
-      user: {
-        id: user._id,
-        email: user.email,
-        displayName: user.displayName,
-        role: user.role
-      }
+      user: toUser(result.rows[0])
     });
   } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({
-      success: false,
-      message: '❌ Error logging in',
-      error: error.message
-    });
+    console.error('Login error:', error.message);
+    res.status(500).json({ success: false, message: '❌ Error logging in' });
   }
 };
 
-// @desc    Get user profile
-// @route   GET /api/auth/profile
 exports.getProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.userId).select('-__v');
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: '❌ User not found'
-      });
+    const row = await findById(req.userId);
+    if (!row) {
+      return res.status(404).json({ success: false, message: '❌ User not found' });
     }
 
-    res.status(200).json({
-      success: true,
-      user
-    });
+    res.status(200).json({ success: true, user: toUser(row) });
   } catch (error) {
-    console.error('Profile error:', error);
-    res.status(500).json({
-      success: false,
-      message: '❌ Error fetching profile',
-      error: error.message
-    });
+    console.error('Profile error:', error.message);
+    res.status(500).json({ success: false, message: '❌ Error fetching profile' });
   }
 };
 
-// @desc    Update user profile
-// @route   PUT /api/auth/profile
 exports.updateProfile = async (req, res) => {
   try {
-    const { displayName, phoneNumber, businessName, businessDescription, address, profileImage } = req.body;
+    const {
+      displayName,
+      phoneNumber,
+      businessName,
+      businessDescription,
+      address = {},
+      profileImage
+    } = req.body;
 
-    const user = await User.findByIdAndUpdate(
-      req.userId,
-      {
+    const result = await query(
+      `UPDATE users
+       SET display_name = COALESCE($1, display_name),
+           phone_number = COALESCE($2, phone_number),
+           business_name = COALESCE($3, business_name),
+           business_description = COALESCE($4, business_description),
+           street = COALESCE($5, street),
+           city = COALESCE($6, city),
+           state = COALESCE($7, state),
+           zip_code = COALESCE($8, zip_code),
+           profile_image = COALESCE($9, profile_image)
+       WHERE id = $10
+       RETURNING *`,
+      [
         displayName,
         phoneNumber,
         businessName,
         businessDescription,
-        address,
-        profileImage
-      },
-      { new: true, runValidators: true }
+        address.street,
+        address.city,
+        address.state,
+        address.zipCode,
+        profileImage,
+        req.userId
+      ]
     );
+
+    if (result.rowCount === 0) {
+      return res.status(404).json({ success: false, message: '❌ User not found' });
+    }
 
     res.status(200).json({
       success: true,
       message: '✅ Profile updated successfully',
-      user
+      user: toUser(result.rows[0])
     });
   } catch (error) {
-    console.error('Update profile error:', error);
-    res.status(500).json({
-      success: false,
-      message: '❌ Error updating profile',
-      error: error.message
-    });
+    console.error('Update profile error:', error.message);
+    res.status(500).json({ success: false, message: '❌ Error updating profile' });
   }
 };
+
+exports.toUser = toUser;
+exports.findById = findById;
